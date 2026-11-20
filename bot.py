@@ -7,7 +7,54 @@ import os, asyncio, time, logging
 from datetime import datetime, timezone, timedelta
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
+
+class ta:
+    @staticmethod
+    def ema(close, length=9):
+        return close.ewm(span=length, adjust=False).mean()
+    @staticmethod
+    def rsi(close, length=14):
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).ewm(alpha=1/length, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/length, adjust=False).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    @staticmethod
+    def macd(close, fast=12, slow=26, signal=9):
+        ema_fast = close.ewm(span=fast, adjust=False).mean()
+        ema_slow = close.ewm(span=slow, adjust=False).mean()
+        line = ema_fast - ema_slow
+        sig = line.ewm(span=signal, adjust=False).mean()
+        return pd.DataFrame({'MACD_12_26_9': line, 'MACDs_12_26_9': sig}, index=close.index)
+    @staticmethod
+    def bbands(close, length=20, std=2):
+        mid = close.rolling(length).mean()
+        s = close.rolling(length).std()
+        return pd.DataFrame({'BBL_20_2.0': mid - s*std, 'BBU_20_2.0': mid + s*std}, index=close.index)
+    @staticmethod
+    def atr(high, low, close, length=14):
+        tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
+        return tr.ewm(alpha=1/length, adjust=False).mean()
+    @staticmethod
+    def adx(high, low, close, length=14):
+        up = high.diff()
+        down = -low.diff()
+        plus_dm = up.where((up > down) & (up > 0), 0)
+        minus_dm = down.where((down > up) & (down > 0), 0)
+        atr_v = ta.atr(high, low, close, length)
+        plus_di = 100 * plus_dm.ewm(alpha=1/length, adjust=False).mean() / atr_v
+        minus_di = 100 * minus_dm.ewm(alpha=1/length, adjust=False).mean() / atr_v
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        adx_v = dx.ewm(alpha=1/length, adjust=False).mean()
+        return pd.DataFrame({'ADX_14': adx_v}, index=close.index)
+    @staticmethod
+    def stoch(high, low, close, k=14, d=3, smooth_k=3):
+        lowest = low.rolling(k).min()
+        highest = high.rolling(k).max()
+        k_val = 100 * (close - lowest) / (highest - lowest)
+        k_val = k_val.rolling(smooth_k).mean()
+        return pd.DataFrame({'STOCHk_14_3_3': k_val}, index=close.index)
 from telegram import Bot
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
