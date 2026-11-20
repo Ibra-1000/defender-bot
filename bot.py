@@ -1,4 +1,10 @@
-
+from flask import Flask
+import threading
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "Bot is alive"
+threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000), daemon=True).start()
 # بوت المدافع - بوتنا الخاص - Ibrahim & Meta AI
 # استراتيجية خرافية: تأكيد ثلاثي + فلتر قوة + فلتر وقت
 # بدون SL / TP - نفس نظام البوت القديم - CALL / PUT - 5 دقائق
