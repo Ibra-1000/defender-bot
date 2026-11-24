@@ -84,9 +84,9 @@ def should_send_startup():
 
 def bot_loop():
     print("🚀 bot_loop بدأ!", flush=True)
-    # رسالة البداية - مرة واحدة فقط، مو كل دقيقة
-    if should_send_startup():
-        send_telegram("🛡️ بوت المدافع اشتغل الآن - بوتنا الخاص\n- يفحص كل أزواج الفوركس كل دقيقة - جاهز للصيد 🔥")
+    # V3: لا نرسل رسالة بداية أبدا - عشان نوقف التكرار نهائيا
+    # البوت يرسل فقط تقرير كل ساعة + الاشارات
+    print('Startup message disabled - V3', flush=True)
     last_hourly = time.time()
     while True:
         try:
