@@ -63,10 +63,30 @@ def scan_market():
     print(f"[{datetime.now()}] ✅ انتهى الفحص {scan_count} - فحصنا {len(last_prices)} زوج", flush=True)
     return last_prices
 
+import pathlib
+STARTUP_LOCK = "/tmp/defender_startup.lock"
+
+def should_send_startup():
+    # يمنع تكرار رسالة البداية اذا اشتغلت اكثر من نسخة في نفس الوقت
+    # يرسلها مرة واحدة فقط كل 3 ساعات
+    try:
+        p = pathlib.Path(STARTUP_LOCK)
+        if p.exists():
+            age = time.time() - p.stat().st_mtime
+            if age < 3*3600:
+                print(f"Startup skipped - already sent {int(age)}s ago", flush=True)
+                return False
+        p.write_text(str(time.time()))
+        return True
+    except Exception as e:
+        print(f"Lock check error: {e}", flush=True)
+        return True
+
 def bot_loop():
     print("🚀 bot_loop بدأ!", flush=True)
-    # رسالة البداية - مهمة جدا للتأكد
-    send_telegram("🛡️ بوت المدافع اشتغل الآن - بوتنا الخاص\n- يفحص كل أزواج الفوركس كل دقيقة - جاهز للصيد 🔥")
+    # رسالة البداية - مرة واحدة فقط، مو كل دقيقة
+    if should_send_startup():
+        send_telegram("🛡️ بوت المدافع اشتغل الآن - بوتنا الخاص\n- يفحص كل أزواج الفوركس كل دقيقة - جاهز للصيد 🔥")
     last_hourly = time.time()
     while True:
         try:
@@ -83,8 +103,10 @@ def bot_loop():
             print(f"LOOP ERROR: {e}", flush=True)
         time.sleep(60)  # كل دقيقة
 
-# تشغيل البوت في Thread منفصل قبل Flask - هذا هو الإصلاح الأساسي
-threading.Thread(target=bot_loop, daemon=True).start()
+# تشغيل البوت في Thread منفصل - مرة واحدة فقط
+# os.environ WERKZEUG_RUN_MAIN يمنع التشغيل مرتين مع Flask reloader
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    threading.Thread(target=bot_loop, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
