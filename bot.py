@@ -1,6 +1,5 @@
 
-# bot.py - V4.1 - إصلاح الأسعار المقلوبة
-# أسعار صحيحة 100% + إشارات
+# bot.py - V5 - أسعار لحظية من Yahoo Finance + إشارات
 import os, time, threading, requests
 from datetime import datetime
 from flask import Flask
@@ -10,7 +9,7 @@ CHAT_ID = os.environ.get("CHAT_ID", "8698451791")
 
 app = Flask(__name__)
 @app.route("/")
-def home(): return "Bot V4.1 alive"
+def home(): return "Bot V5 alive - Live Prices"
 @app.route("/health")
 def health(): return "OK"
 
@@ -18,64 +17,36 @@ def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
-        print(f"Telegram sent: {r.status_code}", flush=True)
+        print(f"Telegram: {r.status_code}", flush=True)
         return r.status_code == 200
     except Exception as e:
         print(f"Telegram ERROR: {e}", flush=True)
         return False
 
-PAIRS = ["EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CAD","EUR/GBP","XAU/USD","GBP/JPY","BTC/USD"]
-
-# كاش للأسعار عشان ما نطلب كل مرة
-_rates_cache = {}
-_rates_time = 0
-
-def get_usd_rates():
-    global _rates_cache, _rates_time
-    if time.time() - _rates_time < 60 and _rates_cache:
-        return _rates_cache
-    try:
-        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=8).json()
-        _rates_cache = r["rates"]
-        _rates_time = time.time()
-        return _rates_cache
-    except:
-        return _rates_cache
-
-def usd_to_pair(pair):
-    # نحول أي زوج لقيمته الصحيحة
-    # rates = كم وحدة من العملة = 1 دولار
-    # مثال: EUR=0.916 يعني 1 USD = 0.916 EUR => EUR/USD = 1/0.916 = 1.091
-    rates = get_usd_rates()
-    if not rates: return None
-    base, quote = pair.split("/")
-    def usd_per_unit(cur):
-        if cur == "USD": return 1.0
-        if cur == "XAU": return None
-        return 1.0 / float(rates[cur])  # دولار لكل 1 وحدة
-    if base == "XAU" or quote == "XAU":
-        return None
-    a = usd_per_unit(base)
-    b = usd_per_unit(quote)
-    if a is None or b is None: return None
-    return a / b
+# Yahoo Finance - أسعار لحظية مثل منصة التداول
+YAHOO = {
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "USDJPY=X",
+    "AUD/USD": "AUDUSD=X",
+    "USD/CAD": "USDCAD=X",
+    "EUR/GBP": "EURGBP=X",
+    "XAU/USD": "GC=F",      # الذهب - عقود الذهب
+    "GBP/JPY": "GBPJPY=X",
+    "BTC/USD": "BTC-USD",
+}
+PAIRS = list(YAHOO.keys())
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def get_price(pair):
+    sym = YAHOO[pair]
     try:
-        if pair == "BTC/USD":
-            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=8).json()
-            return float(r["price"])
-        if pair == "XAU/USD":
-            # الذهب من goldprice
-            try:
-                r = requests.get("https://data-asg.goldprice.org/dbXRates/USD", timeout=8).json()
-                return float(r["items"][0]["currXAU"])
-            except:
-                return 2650.0
-        p = usd_to_pair(pair)
-        return round(p, 5) if p else None
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+        r = requests.get(url, headers=HEADERS, timeout=10).json()
+        price = r["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        return float(price)
     except Exception as e:
-        print(f"Price ERROR {pair}: {e}", flush=True)
+        print(f"Yahoo ERROR {pair}: {e}", flush=True)
         return None
 
 last_prices = {}
@@ -90,15 +61,16 @@ def calc_momentum(lst):
 def scan_market():
     global scan_count
     scan_count += 1
-    print(f"[{datetime.now()}] فحص {scan_count}", flush=True)
+    print(f"[{datetime.now()}] V5 فحص {scan_count}", flush=True)
     for pair in PAIRS:
         price = get_price(pair)
         if price:
             last_prices[pair] = price
             history.setdefault(pair, []).append(price)
-            if len(history[pair]) > 20: history[pair].pop(0)
+            if len(history[pair]) > 30: history[pair].pop(0)
             print(f"  {pair} = {price}", flush=True)
-    print(f"انتهى الفحص {scan_count}", flush=True)
+        time.sleep(0.5)
+    print(f"انتهى الفحص {scan_count} - {len(last_prices)} زوج", flush=True)
 
 def check_signals():
     for pair, lst in history.items():
@@ -115,10 +87,10 @@ def check_signals():
         if signal:
             last_signal_time[pair] = now
             send_telegram(f"🚨 <b>فرصة تداول!</b>\n\n{signal}\n\n⏰ {datetime.now().strftime('%H:%M:%S')}\n⚠️ لا تخاطر بأكثر من 1-2%")
-            print(f"SIGNAL {pair} {mom}", flush=True)
+            print(f"SIGNAL {pair} {mom:.2f}%", flush=True)
 
 def bot_loop():
-    print("🚀 bot_loop V4.1 بدأ", flush=True)
+    print("🚀 bot_loop V5 بدأ - أسعار لحظية", flush=True)
     last_hourly = time.time()
     scan_market()
     while True:
@@ -127,7 +99,7 @@ def bot_loop():
             check_signals()
             if time.time() - last_hourly >= 3600:
                 last_hourly = time.time()
-                report = f"🕐 تقرير الساعة\n✅ البوت شغال V4.1\n🔍 عدد الفحوصات: {scan_count}\n📊 آخر الأسعار (حقيقية):\n"
+                report = f"🕐 تقرير الساعة\n✅ البوت شغال V5 - أسعار لحظية\n🔍 عدد الفحوصات: {scan_count}\n📊 آخر الأسعار (حية):\n"
                 for k, v in last_prices.items():
                     chg = ""
                     if k in history and len(history[k]) >= 2:
@@ -145,4 +117,4 @@ if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-        
+    
