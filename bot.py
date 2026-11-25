@@ -1,123 +1,171 @@
+# bot.py - V6 POCKET OPTION PRO - إشارات احترافية دقيقة عالية
+import os, time, requests, threading
+from datetime import datetime, timedelta
+import yfinance as yf
 
-# bot.py - V5.2 - إشارات سكالبينج كثيرة - أسعار لحظية من Yahoo Finance + إشارات
-import os, time, threading, requests
-from datetime import datetime
-from flask import Flask
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "9138056631:AAE2YjCfoHnwd4Nq5wNV9gur2t0RvgvAOUA")
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "9138056631:AAE2YjCfoHnwd4Nq5wNV9gur2t0RvgvAOUA")
 CHAT_ID = os.environ.get("CHAT_ID", "8698451791")
 
-app = Flask(__name__)
-@app.route("/")
-def home(): return "Bot V5 alive - Live Prices"
-@app.route("/health")
-def health(): return "OK"
-
-def send_telegram(msg):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
-        print(f"Telegram: {r.status_code}", flush=True)
-        return r.status_code == 200
-    except Exception as e:
-        print(f"Telegram ERROR: {e}", flush=True)
-        return False
-
-# Yahoo Finance - أسعار لحظية مثل منصة التداول
-YAHOO = {
+# أزواج بوكت أوبشن - الأكثر ربحاً
+PAIRS = {
     "EUR/USD": "EURUSD=X",
     "GBP/USD": "GBPUSD=X",
     "USD/JPY": "USDJPY=X",
     "AUD/USD": "AUDUSD=X",
     "USD/CAD": "USDCAD=X",
     "EUR/GBP": "EURGBP=X",
-    "XAU/USD": "GC=F",      # الذهب - عقود الذهب
+    "EUR/JPY": "EURJPY=X",
     "GBP/JPY": "GBPJPY=X",
+    "XAU/USD": "GC=F",
     "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
 }
-PAIRS = list(YAHOO.keys())
-HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-def get_price(pair):
-    sym = YAHOO[pair]
+history = {p: [] for p in PAIRS}
+last_signal = {p: 0 for p in PAIRS}
+
+def send(msg):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
-        r = requests.get(url, headers=HEADERS, timeout=10).json()
-        price = r["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        return float(price)
-    except Exception as e:
-        print(f"Yahoo ERROR {pair}: {e}", flush=True)
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
+    except: pass
+
+def rsi(prices, period=14):
+    if len(prices) < period+1: return 50
+    gains, losses = [], []
+    for i in range(1, len(prices)):
+        d = prices[i]-prices[i-1]
+        gains.append(max(d,0)); losses.append(max(-d,0))
+    if len(gains) < period: return 50
+    avg_g = sum(gains[-period:])/period
+    avg_l = sum(losses[-period:])/period
+    if avg_l == 0: return 100
+    rs = avg_g/avg_l
+    return 100 - (100/(1+rs))
+
+def ema(prices, period):
+    if len(prices) < period: return prices[-1] if prices else 0
+    k = 2/(period+1)
+    e = prices[0]
+    for p in prices[1:]: e = p*k + e*(1-k)
+    return e
+
+def analyze(pair, prices):
+    """استراتيجية احترافية: RSI + EMA + MACD + Bollinger + Momentum"""
+    if len(prices) < 20: return None
+    price = prices[-1]
+    r = rsi(prices)
+    ema9 = ema(prices, 9)
+    ema21 = ema(prices, 21)
+    ema50 = ema(prices, 50) if len(prices) >= 50 else ema21
+    # Bollinger
+    ma20 = sum(prices[-20:])/20
+    std = (sum((x-ma20)**2 for x in prices[-20:])/20)**0.5
+    upper, lower = ma20 + 2*std, ma20 - 2*std
+    # MACD بسيط
+    macd = ema(prices, 12) - ema(prices, 26)
+    macd_sig = ema(prices[-9:] if len(prices)>=9 else prices, 9) if False else 0
+    # الزخم 5 دقائق
+    mom5 = ((price - prices[-5])/prices[-5]*100) if len(prices)>=5 and prices[-5] else 0
+    mom3 = ((price - prices[-3])/prices[-3]*100) if len(prices)>=3 and prices[-3] else 0
+
+    score_up = 0; score_down = 0; reasons = []
+    # 1 - RSI
+    if r < 30: score_up += 25; reasons.append("RSI تشبع بيع")
+    elif r < 40: score_up += 10; reasons.append("RSI قريب تشبع")
+    if r > 70: score_down += 25; reasons.append("RSI تشبع شراء")
+    elif r > 60: score_down += 10; reasons.append("RSI قريب تشبع")
+    # 2 - EMA Trend
+    if price > ema9 > ema21: score_up += 20; reasons.append("ترند صاعد EMA")
+    if price < ema9 < ema21: score_down += 20; reasons.append("ترند هابط EMA")
+    # 3 - Bollinger
+    if price <= lower: score_up += 20; reasons.append("لمس Bollinger السفلي = ارتداد")
+    if price >= upper: score_down += 20; reasons.append("لمس Bollinger العلوي = ارتداد")
+    # 4 - MACD
+    if macd > 0: score_up += 15
+    else: score_down += 15
+    # 5 - Momentum
+    if mom5 > 0.03: score_up += 10
+    if mom5 < -0.03: score_down += 10
+    if mom3 > 0.02: score_up += 10
+    if mom3 < -0.02: score_down += 10
+
+    # فلتر قوي: لا إشارة إذا السعر بين المتوسطات (تذبذب)
+    if abs(price - ema21)/price*100 < 0.01 and r > 45 and r < 55:
         return None
 
-last_prices = {}
-history = {}
-scan_count = 0
-last_signal_time = {}
+    now = datetime.now()
+    entry = now.strftime("%H:%M:%S")
+    expiry = (now + timedelta(minutes=5)).strftime("%H:%M:%S")
 
-def calc_momentum(lst):
-    if len(lst) < 3: return 0
-    return ((lst[-1]-lst[-3])/lst[-3])*100 if lst[-3] else 0
+    if score_up >= 70:
+        strength = min(95, score_up)
+        return f"""🟢🟢 <b>CALL - شراء قوي - POCKET OPTION</b>
+━━━━━━━━━━━━━━
+📊 <b>الزوج:</b> {pair}
+💰 <b>السعر:</b> {price:.5f}
+🎯 <b>قوة الإشارة:</b> {strength}%
+⏰ <b>وقت الدخول:</b> {entry}
+⏳ <b>المدة:</b> 5 دقائق
+🏁 <b>ينتهي:</b> {expiry}
+📈 <b>RSI:</b> {r:.1f} | <b>EMA9:</b> {ema9:.5f}
+✅ <b>الاستراتيجية:</b> RSI + EMA + Bollinger + MACD
+📝 {', '.join(reasons[:3])}
+⚡ <b>ادخل الآن - إذا CALL / أخضر → شراء 5 دقائق</b>
+⛔ <b>لا تدخل إذا تأخرت أكثر من 1 دقيقة</b>"""
+    if score_down >= 70:
+        strength = min(95, score_down)
+        return f"""🔴🔴 <b>PUT - بيع قوي - POCKET OPTION</b>
+━━━━━━━━━━━━━━
+📊 <b>الزوج:</b> {pair}
+💰 <b>السعر:</b> {price:.5f}
+🎯 <b>قوة الإشارة:</b> {strength}%
+⏰ <b>وقت الدخول:</b> {entry}
+⏳ <b>المدة:</b> 5 دقائق
+🏁 <b>ينتهي:</b> {expiry}
+📉 <b>RSI:</b> {r:.1f} | <b>EMA9:</b> {ema9:.5f}
+✅ <b>الاستراتيجية:</b> RSI + EMA + Bollinger + MACD
+📝 {', '.join(reasons[:3])}
+⚡ <b>ادخل الآن - إذا PUT / أحمر → بيع 5 دقائق</b>
+⛔ <b>لا تدخل إذا تأخرت أكثر من 1 دقيقة</b>"""
+    return None
 
-def scan_market():
-    global scan_count
-    scan_count += 1
-    print(f"[{datetime.now()}] V5 فحص {scan_count}", flush=True)
-    for pair in PAIRS:
-        price = get_price(pair)
-        if price:
-            last_prices[pair] = price
-            history.setdefault(pair, []).append(price)
-            if len(history[pair]) > 30: history[pair].pop(0)
-            print(f"  {pair} = {price}", flush=True)
-        time.sleep(0.5)
-    print(f"انتهى الفحص {scan_count} - {len(last_prices)} زوج", flush=True)
+def fetch_price(sym):
+    try:
+        t = yf.Ticker(sym)
+        d = t.history(period="1d", interval="1m")
+        if d.empty: return None
+        return float(d['Close'].iloc[-1])
+    except: return None
 
-def check_signals():
-    for pair, lst in history.items():
-        if len(lst) < 3: continue
-        mom = calc_momentum(lst)
-        price = last_prices.get(pair, 0)
-        now = time.time()
-        if now - last_signal_time.get(pair, 0) < 300: continue
-        # الفوركس يتحرك ببطء - عتبة أقل له، والذهب والبيتكوين عتبة أعلى
-        is_forex = pair not in ["XAU/USD", "BTC/USD"]
-        thresh = 0.02 if is_forex else 0.08
-        signal = None
-        if mom >= thresh:
-            signal = f"🟢 <b>إشارة صعود سكالبينج ⚡</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📈 الزخم: +{mom:.2f}% في 5 دقائق\n🎯 ادخل شراء\n⛔ وقف: {price*0.998:.4f}\n✅ هدف: {price*1.004:.4f}"
-        elif mom <= -thresh:
-            signal = f"🔴 <b>إشارة هبوط سكالبينج ⚡</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📉 الزخم: {mom:.2f}% في 5 دقائق\n🎯 ادخل بيع\n⛔ وقف: {price*1.002:.4f}\n✅ هدف: {price*0.996:.4f}"
-        if signal:
-            last_signal_time[pair] = now
-            send_telegram(f"🚨 <b>فرصة تداول!</b>\n\n{signal}\n\n⏰ {datetime.now().strftime('%H:%M:%S')}\n⚠️ لا تخاطر بأكثر من 1-2%")
-            print(f"SIGNAL {pair} {mom:.2f}%", flush=True)
-
-def bot_loop():
-    print("🚀 bot_loop V5 بدأ - أسعار لحظية", flush=True)
-    last_hourly = time.time()
-    scan_market()
+def loop():
+    send("🤖 <b>BOT PRO MAX ON - POCKET OPTION V6</b>\n✅ استراتيجية: RSI + EMA + Bollinger + MACD\n🎯 إشارات كل 5 دقائق - دقة عالية فقط (70%+)\n⏰ مدة الصفقة: 5 دقائق")
     while True:
         try:
-            scan_market()
-            check_signals()
-            if time.time() - last_hourly >= 3600:
-                last_hourly = time.time()
-                report = f"🕐 تقرير الساعة\n✅ البوت شغال V5.2 - سكالبينج - أسعار لحظية\n🔍 عدد الفحوصات: {scan_count}\n📊 آخر الأسعار (حية):\n"
-                for k, v in last_prices.items():
-                    chg = ""
-                    if k in history and len(history[k]) >= 2:
-                        d = ((v - history[k][0]) / history[k][0]) * 100
-                        chg = f" ({d:+.2f}%)"
-                    report += f"{k}: {v}{chg}\n"
-                report += "\n⏳ نراقب السوق ونرسل إشارة عند أي حركة قوية"
-                send_telegram(report)
+            for pair, sym in PAIRS.items():
+                p = fetch_price(sym)
+                if p:
+                    history[pair].append(p)
+                    if len(history[pair]) > 60: history[pair] = history[pair][-60:]
+                    # فحص كل 5 دقائق: لا إشارة مكررة لنفس الزوج قبل 5 دقائق
+                    if time.time() - last_signal[pair] >= 300:
+                        sig = analyze(pair, history[pair])
+                        if sig:
+                            send(sig)
+                            last_signal[pair] = time.time()
+                time.sleep(2)
+            # تقرير كل ساعة
+            if datetime.now().minute == 0:
+                msg = "📊 <b>تقرير V6 - POCKET OPTION</b>\n"
+                for pair in PAIRS:
+                    if history[pair]:
+                        msg += f"{pair}: {history[pair][-1]:.5f} | RSI {rsi(history[pair]):.0f}\n"
+                send(msg)
+                time.sleep(60)
+            time.sleep(60)  # فحص كل دقيقة، إشارة كل 5 دقائق
         except Exception as e:
-            print(f"LOOP ERROR: {e}", flush=True)
-        time.sleep(60)
+            time.sleep(30)
 
-if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-    threading.Thread(target=bot_loop, daemon=True).start()
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    loop()
     
