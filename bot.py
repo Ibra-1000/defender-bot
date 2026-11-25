@@ -1,5 +1,5 @@
 
-# bot.py - V5 - أسعار لحظية من Yahoo Finance + إشارات
+# bot.py - V5.2 - إشارات سكالبينج كثيرة - أسعار لحظية من Yahoo Finance + إشارات
 import os, time, threading, requests
 from datetime import datetime
 from flask import Flask
@@ -55,8 +55,8 @@ scan_count = 0
 last_signal_time = {}
 
 def calc_momentum(lst):
-    if len(lst) < 5: return 0
-    return ((lst[-1]-lst[-5])/lst[-5])*100 if lst[-5] else 0
+    if len(lst) < 3: return 0
+    return ((lst[-1]-lst[-3])/lst[-3])*100 if lst[-3] else 0
 
 def scan_market():
     global scan_count
@@ -74,16 +74,19 @@ def scan_market():
 
 def check_signals():
     for pair, lst in history.items():
-        if len(lst) < 5: continue
+        if len(lst) < 3: continue
         mom = calc_momentum(lst)
         price = last_prices.get(pair, 0)
         now = time.time()
-        if now - last_signal_time.get(pair, 0) < 1800: continue
+        if now - last_signal_time.get(pair, 0) < 300: continue
+        # الفوركس يتحرك ببطء - عتبة أقل له، والذهب والبيتكوين عتبة أعلى
+        is_forex = pair not in ["XAU/USD", "BTC/USD"]
+        thresh = 0.02 if is_forex else 0.08
         signal = None
-        if mom >= 0.15:
-            signal = f"🟢 <b>إشارة صعود قوية</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📈 الزخم: +{mom:.2f}% في 5 دقائق\n🎯 ادخل شراء\n⛔ وقف: {price*0.998:.4f}\n✅ هدف: {price*1.004:.4f}"
-        elif mom <= -0.15:
-            signal = f"🔴 <b>إشارة هبوط قوية</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📉 الزخم: {mom:.2f}% في 5 دقائق\n🎯 ادخل بيع\n⛔ وقف: {price*1.002:.4f}\n✅ هدف: {price*0.996:.4f}"
+        if mom >= thresh:
+            signal = f"🟢 <b>إشارة صعود سكالبينج ⚡</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📈 الزخم: +{mom:.2f}% في 5 دقائق\n🎯 ادخل شراء\n⛔ وقف: {price*0.998:.4f}\n✅ هدف: {price*1.004:.4f}"
+        elif mom <= -thresh:
+            signal = f"🔴 <b>إشارة هبوط سكالبينج ⚡</b>\n📊 الزوج: {pair}\n💰 السعر: {price}\n📉 الزخم: {mom:.2f}% في 5 دقائق\n🎯 ادخل بيع\n⛔ وقف: {price*1.002:.4f}\n✅ هدف: {price*0.996:.4f}"
         if signal:
             last_signal_time[pair] = now
             send_telegram(f"🚨 <b>فرصة تداول!</b>\n\n{signal}\n\n⏰ {datetime.now().strftime('%H:%M:%S')}\n⚠️ لا تخاطر بأكثر من 1-2%")
@@ -99,7 +102,7 @@ def bot_loop():
             check_signals()
             if time.time() - last_hourly >= 3600:
                 last_hourly = time.time()
-                report = f"🕐 تقرير الساعة\n✅ البوت شغال V5 - أسعار لحظية\n🔍 عدد الفحوصات: {scan_count}\n📊 آخر الأسعار (حية):\n"
+                report = f"🕐 تقرير الساعة\n✅ البوت شغال V5.2 - سكالبينج - أسعار لحظية\n🔍 عدد الفحوصات: {scan_count}\n📊 آخر الأسعار (حية):\n"
                 for k, v in last_prices.items():
                     chg = ""
                     if k in history and len(history[k]) >= 2:
